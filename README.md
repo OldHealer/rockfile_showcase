@@ -54,23 +54,25 @@
 
 ## Screenshots
 
-<!--
-Подкинуть PNG'шки в docs/screenshots/ и заменить ссылки ниже.
-Рекомендуемые: landing.png, contacts-list.png, contact-detail.png,
-ai-agent.png, admin-panel.png, mobile-burger.png.
--->
+### Главная (landing)
 
-| Главная (landing) | Список контактов |
-|---|---|
-| *(скрин будет добавлен)* | *(скрин будет добавлен)* |
+![Landing](docs/screenshots/landing.png)
 
-| Карточка контакта | AI-агент (Concierge) |
-|---|---|
-| *(скрин будет добавлен)* | *(скрин будет добавлен)* |
+### Список контактов с фильтрами и фуллтекст-поиском
 
-| Admin-панель | Mobile |
-|---|---|
-| *(скрин будет добавлен)* | *(скрин будет добавлен)* |
+![Contacts list](docs/screenshots/contacts-list.png)
+
+### Детальная карточка контакта
+
+![Contact detail](docs/screenshots/contact-detail.png)
+
+### AI-агент Concierge — intent-классификация и структурный ответ
+
+![Concierge agent — отчёт по обещаниям](docs/screenshots/ai-agent-concierge.png)
+
+### Admin-панель — статистика и список юзеров
+
+![Admin panel](docs/screenshots/admin-panel.png)
 
 ## Documentation
 
