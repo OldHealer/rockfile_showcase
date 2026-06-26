@@ -66,6 +66,10 @@
 
 ![Contact detail](docs/screenshots/contact-detail.png)
 
+### AI-агент «Подготовка к встрече» — контекст контакта + рекомендации по follow-up'у
+
+![Prepare-meeting agent](docs/screenshots/ai-agent-prepare-meeting.png)
+
 ### AI-агент Concierge — intent-классификация и структурный ответ
 
 ![Concierge agent — отчёт по обещаниям](docs/screenshots/ai-agent-concierge.png)
