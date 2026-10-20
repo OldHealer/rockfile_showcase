@@ -2,7 +2,7 @@
 
 Images rendered in the root `README.md`. Taken on demo data only - no real contacts.
 
-**Desktop** - 1440×900 viewport at 2x, Purple theme, English UI:
+Desktop, Purple theme, English UI:
 
 | File | Screen |
 |---|---|
@@ -17,4 +17,4 @@ Images rendered in the root `README.md`. Taken on demo data only - no real conta
 | `command-palette.png` | ⌘K palette open over any page |
 | `agent-concierge.png` | Concierge answer with sources (`/agents.html`) |
 | `agent-prepare-meeting.png` | Meeting prep result (`/agents.html`) |
-| `themes.png` | One screen in Purple, Amber and Light, side by side |
+| `theme.png` | Landing split in Amber and Light, with the language / theme menu open |

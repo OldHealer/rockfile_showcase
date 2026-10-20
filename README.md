@@ -85,9 +85,9 @@ It is a solo project built end-to-end: domain model, API, auth, AI agents, front
 
 ![Prepare-meeting agent](docs/screenshots/agent-prepare-meeting.png)
 
-### Themes - Purple, Amber, Light
+### Themes and language switcher - Amber and Light
 
-![Themes](docs/screenshots/themes.png)
+![Themes](docs/screenshots/theme.png)
 
 ## Features
 
