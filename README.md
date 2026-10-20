@@ -2,20 +2,10 @@
 
 > **A personal relationship file inspired by the Rockefeller card index - contact cards, promises, notes and AI assistants that help you follow up with people on time.**
 
-![Python](https://img.shields.io/static/v1?label=Python&message=3.12&logo=python&logoColor=white&labelColor=3776AB&color=6A737D&style=for-the-badge)
-![FastAPI](https://img.shields.io/static/v1?label=FastAPI&message=0.143&logo=fastapi&logoColor=white&labelColor=009688&color=6A737D&style=for-the-badge)
-![Pydantic](https://img.shields.io/static/v1?label=Pydantic&message=v2&logo=pydantic&logoColor=white&labelColor=E92063&color=6A737D&style=for-the-badge)
-![SQLAlchemy](https://img.shields.io/static/v1?label=SQLAlchemy&message=2.1%20async&logo=sqlalchemy&logoColor=white&labelColor=D71F00&color=6A737D&style=for-the-badge)
-![PostgreSQL](https://img.shields.io/static/v1?label=PostgreSQL&message=18&logo=postgresql&logoColor=white&labelColor=4169E1&color=6A737D&style=for-the-badge)
-![Keycloak](https://img.shields.io/static/v1?label=Keycloak&message=OIDC&logo=keycloak&logoColor=white&labelColor=5B68A3&color=6A737D&style=for-the-badge)  
-![LangGraph](https://img.shields.io/static/v1?label=LangGraph&message=agents&labelColor=8e4c34&logoColor=white&color=6A737D&style=for-the-badge)
-![JavaScript](https://img.shields.io/static/v1?label=JS&message=vanilla%2C%20no%20bundler&logo=javascript&logoColor=black&labelColor=F7DF1E&color=6A737D&style=for-the-badge)
-![Playwright](https://img.shields.io/static/v1?label=e2e&message=Playwright&logo=playwright&logoColor=white&labelColor=2EAD33&color=6A737D&style=for-the-badge)
-![Docker](https://img.shields.io/static/v1?label=Docker&message=Compose&logo=docker&logoColor=white&labelColor=2496ED&color=6A737D&style=for-the-badge)  
-![Hetzner](https://img.shields.io/static/v1?label=Hosting&message=Hetzner%20VPS&logo=hetzner&logoColor=white&labelColor=D50C2D&color=6A737D&style=for-the-badge)
-![Caddy](https://img.shields.io/static/v1?label=Caddy&message=auto-HTTPS&logo=caddy&logoColor=white&labelColor=1F88C0&color=6A737D&style=for-the-badge)
-![GitHub Actions](https://img.shields.io/static/v1?label=CI%2FCD&message=GitHub%20Actions&logo=githubactions&logoColor=white&labelColor=2088FF&color=6A737D&style=for-the-badge)
-![Status](https://img.shields.io/static/v1?label=status&message=private%20beta&labelColor=c96c4b&logoColor=white&color=6A737D&style=for-the-badge)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/stack-dark.svg">
+  <img src="docs/assets/stack-light.svg" alt="Tech stack: Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2.1, PostgreSQL 18, Keycloak 26, LangGraph, FastMCP, LLM fallback chain Groq → Gemini → DeepSeek → OpenAI → Anthropic → Ollama, vanilla JavaScript, CSS, Playwright, pytest, ESLint, Ruff, Docker Compose, Caddy, Hetzner, GitHub Actions, Let's Encrypt, Dependabot" width="100%">
+</picture>
 
 **Live:** [getrockfile.com](https://getrockfile.com) - private beta, registration by invite.  
 **Source code:** private repository. Access for a code review is available on request.  
