@@ -1,550 +1,120 @@
-# Архитектурное видение приложения Rockfile (Картотека контактов Рокфеллера)
+# Architecture
 
-## 1. Обзор продукта
+Rockfile is a modular monolith: one FastAPI application serves the JSON API, the HTML pages and the static assets, and hosts the AI agents in-process. Identity lives in Keycloak. Everything runs as one Docker Compose stack.
 
-**Rockfile** — приложение для управления персональной картотекой контактов по методологии Рокфеллера. 
-Цель — превратить обычные контакты в инструмент для построения осознанных, персонализированных отношений за счёт структурированного хранения детальной информации о каждом человеке.
+## Domain model
 
----
-
-## 2. Основные принципы проектирования
-
-- **Персонализация превыше всего** — каждый контакт должен содержать максимум контекста для тёплого, осмысленного общения.
-- **Структурированность** — данные организованы по категориям, а не в виде хаотичных заметок.
-- **Историчность** — сохраняем хронологию взаимодействий и важные детали из прошлых встреч.
-- **Расширяемость** — архитектура допускает добавление функций (напоминания, связи между контактами, аналитика).
-
----
-
-## 3. Сущности и доменная модель
-
-### 3.1. Диаграмма сущностей (ER)
-
-**Принцип:** Каждый человек — полноценная карточка (ContactCard). Связи между людьми — через ContactLink. Семья, коллеги, знакомые — все равноправные контакты с разными типами связей.
-
-```
-                    ┌─────────────────────────────────────────────────────────────────┐
-                    │              ContactCard (Карточка контакта)                    │
-                    │  Один человек = одна карточка. Иван, Жанна, Коля, Витя — все    │
-                    │  имеют полную карточку с контактами, интересами, историей.      │
-                    ├─────────────────────────────────────────────────────────────────┤
-                    │  id, full_name, address, phone, email, socials                  │
-                    │  first_met_at, first_met_place, first_met_context               │
-                    │  relationship_type*, known_through_contact_id*                  │
-                    │  hobbies[], interests[], family_status, birthday                │
-                    │  last_contact_at, last_contact_summary, promises[], goals[]...  │
-                    └───────────┬─────────────────────┬──────────────────┬────────────┘
-                                │                     │                  │
-            ┌───────────────────┘                     │                  └───────────────────┐
-            │ 1:N                                     │ 1:N                                │
-            ▼                                         ▼                                    │
-┌───────────────────────────────┐       ┌───────────────────────────────┐                  │
-│  ContactInteraction           │       │  ContactLink                  │                  │
-│  Встречи, звонки, переписки   │       │  Связь между двумя контактами │◄─────────────────┘
-├───────────────────────────────┤       ├───────────────────────────────┤   N:N (через
-│  id, contact_id               │       │  contact_id_a, contact_id_b   │    ContactLink)
-│  occurred_at, channel, place  │       │  relationship_type            │
-│  summary, notes               │       │  context, is_directed         │
-│  promises[], mentions[]       │       └───────────────────────────────┘
-└───────────────────────────────┘       spouse, friend, colleague, parent, child...
+```mermaid
+erDiagram
+    TENANT ||--o{ APP_USER : has
+    TENANT ||--o{ CONTACT_CARD : owns
+    CONTACT_CARD ||--o{ CONTACT_FAMILY_MEMBER : has
+    CONTACT_CARD ||--o{ CONTACT_INTERACTION : has
+    CONTACT_CARD ||--o{ CONTACT_LINK : "a / b"
+    CONTACT_CARD ||--o{ PROMISE : about
+    CONTACT_INTERACTION ||--o{ PROMISE : "source"
+    APP_USER ||--o{ NOTE : writes
+    NOTE ||--o{ NOTE_ROW : contains
+    NOTE_ROW ||--o| PROMISE : "source (row with a due date)"
+    NOTE }o--o| CONTACT_CARD : "optional link"
+    APP_USER ||--o{ AGENT_CALL : triggers
+    INVITE }o--o| APP_USER : "redeemed by"
 ```
 
-\* `relationship_type` на карточке — как **я** знаю этого человека. `known_through_contact_id` — через кого познакомился.
+| Entity | Purpose |
+|---|---|
+| `Tenant` | Isolation boundary. Every business row carries `tenant_id`; one tenant is created per user at sign-up |
+| `AppUser` | Link between the Keycloak subject and local data: tenant, ban flag, access expiry, last login |
+| `ContactCard` | The card itself: identity, relationship type (business / personal / other), interests, hobbies, goals, ambitions, birthday, personal notes, `is_demo` flag for seeded data |
+| `ContactFamilyMember` | Family members of a contact, with their own birthdays |
+| `ContactLink` | Edge of the relationship graph between two contacts: type, context, directed or not |
+| `ContactInteraction` | A meeting, call or message with date, channel, notes and mentions |
+| `Promise` | Commitment in either direction (`mine` / `theirs`) with a due date and completion time. Its source is an interaction or a note row; if the source is deleted the promise stays for history |
+| `Note`, `NoteRow` | Checklist notes, private to a user, optionally linked to a contact; rows are text or checkboxes with an optional due date |
+| `Invite` | One-time registration code with expiry, revocation and redemption info |
+| `AgentCall` | Audit record of every LLM attempt: agent, provider, model, tokens, latency, status |
+| `RoadmapItem` | Public product roadmap managed from the admin panel |
 
-### 3.2. Описание сущностей
+Contact search uses PostgreSQL full-text search: generated `tsvector` columns with GIN indexes and `websearch_to_tsquery`.
 
-#### ContactCard (Карточка контакта)
-
-
-| Группа данных         | Поля                                                                   | Описание                                                 |
-| --------------------- | ---------------------------------------------------------------------- | -------------------------------------------------------- |
-| **Идентификация**     | `full_name`, `address`, `phone`, `email`, `socials`                    | Полное имя и все контактные данные, соцсети в JSON       |
-| **Знакомство**        | `first_met_at`, `first_met_place`, `first_met_context`                 | Когда, где и при каких обстоятельствах познакомились     |
-| **Отношения**         | `relationship_type`, `projects_notes`                                  | Тип (деловые/личные) и проекты/договорённости            |
-| **Интересы**          | `hobbies`, `interests`                                                 | Хобби и личные интересы (массивы)                        |
-| **Семья**             | `family_status`, `birthday`                                            | Положение, день рождения (о самом контакте)             |
-| **Последний контакт** | `last_contact_at`, `last_contact_summary`                              | Дата и краткая суть последнего общения                   |
-| **Особые моменты**    | `promises`, `recommendations`, `competence_rating`, `competence_notes` | Обещания, рекомендации, оценка компетенций               |
-| **Цели**              | `goals`, `ambitions`                                                   | Планы на будущее и амбиции                               |
-
-
-#### ContactLink (Связи между контактами) — подробно
-
-##### Две разные вещи: «я ↔ контакт» и «контакт ↔ контакт»
-
-В картотеке есть **два уровня** отношений:
-
-1. **Как я знаю человека** — хранится **на карточке** (`ContactCard.relationship_type`, `known_through_contact_id`).  
-   Примеры: коллега, брат, знакомый, «узнал через Ивана».
-
-2. **Как мои контакты связаны друг с другом** — хранится в **ContactLink**.  
-   Примеры: Иван и Жанна — супруги, Жанна и Коля — друзья.
-
-ContactLink нужен именно для **связей между моими контактами**, а не для связи «я ↔ контакт».
-
----
-
-##### Что такое ContactLink
-
-**ContactLink** — это запись о том, что **два человека из моей картотеки** как-то связаны между собой.
-
-Одна запись ContactLink = одна связь между двумя карточками (двумя людьми).
-
-| Поле                | Тип     | Описание |
-|---------------------|---------|----------|
-| `id`                | UUID    | Идентификатор связи |
-| `contact_id_a`      | UUID    | ID первой карточки (первый человек) |
-| `contact_id_b`      | UUID    | ID второй карточки (второй человек) |
-| `relationship_type` | enum    | Тип связи: `spouse`, `friend`, `colleague`, `parent`, `child`, `sibling`, `acquaintance`, `met_through`, `other` |
-| `context`           | text    | Пояснение («супруга Ивана», «друг Жанны», «познакомились на конференции») |
-| `is_directed`       | bool    | Если `true` — связь направлена от A к B (напр. «A — начальник B»). Иначе — симметричная (друзья, супруги) |
-| `created_at`        | datetime| Когда связь добавлена |
-
----
-
-##### Когда создавать ContactLink
-
-ContactLink создаётся, когда ты фиксируешь: «эти два человека из моей картотеки **знают друг друга** (или связаны)».
-
-Примеры:
-- «Жанна — жена Ивана» → Link(Иван, Жанна, spouse)
-- «Коля и Витя — друзья Жанны» → Link(Жанна, Коля, friend), Link(Жанна, Витя, friend)
-- «Петров познакомил меня с Сидоровым» → Link(Петров, Сидоров, met_through), context: «Петров познакомил»
-- «Мария — дочь Сергея» → Link(Сергей, Мария, parent), is_directed=true
-
----
-
-##### Пример: граф отношений
-
-> У меня есть коллега Иван. У Ивана супруга Жанна. У Жанны два друга — Коля и Витя. Коля — мой брат, Витя — мой знакомый.
-
-**Карточки (ContactCard):** у каждого человека своя карточка: Иван, Жанна, Коля, Витя.
-
-**Моя связь с каждым** (на карточке):
-- Иван: `relationship_type = colleague`
-- Жанна: `relationship_type = contact_of_contact`, `known_through_contact_id = Ivan`
-- Коля: `relationship_type = brother`
-- Витя: `relationship_type = acquaintance`
-
-**Связи между ними** (ContactLink):
-
-| contact_id_a | contact_id_b | relationship_type | context          |
-|--------------|--------------|-------------------|------------------|
-| Иван         | Жанна        | spouse            | жена Ивана       |
-| Жанна        | Коля         | friend            | друг Жанны       |
-| Жанна        | Витя         | friend            | друг Жанны       |
-
-Визуально:
+## Backend layers
 
 ```
-        [Я]
-         │
-    ┌────┼────┬────────┐
-    │    │    │        │
-  Иван  Коля Витя   Жанна
- (колл) (брат)(знак)  │
-    │                 │
-    └────── spouse ───┘
-              │
-         friend│friend
-          ┌────┴────┐
-        Коля      Витя
+sources/
+  api/
+    routers/v1/    HTTP layer: validation, auth dependency, tenant scoping
+    services/      business logic; every function takes the DB session as its first argument
+    schemas/       Pydantic request/response models
+    data_base/     SQLAlchemy models and async session
+    auth/          JWT validation against Keycloak JWKS (cached), Keycloak admin client
+    templates/     Jinja2 email templates
+    i18n.py        API error messages in the interface language
+    i18n_html.py   server-side translation of HTML pages
+  agents/          LangGraph graphs, LLM factory, MCP tools
+  web/             HTML pages, CSS, ES modules, i18n dictionaries, fonts
+  settings.py      configuration through pydantic-settings
 ```
 
-Иван связан со мной (коллега) и с Жанной (супруга). Жанна связана с Иваном, Колей и Витей. Коля и Витя связаны и со мной (брат, знакомый), и с Жанной (друзья).
+Conventions that hold across the code base:
 
----
+- **Async everywhere**, SQLAlchemy 2 typed models. Collection relationships are `lazy="raise"`, so an accidental lazy load in async code fails loudly in tests instead of silently issuing queries; loading is always explicit.
+- **Tenant scoping in the router layer**: every endpoint takes the tenant from the authenticated user, never from the request.
+- **Configuration only through `settings.py`** (nested pydantic-settings), no direct `os.getenv`.
+- **Migrations run at application startup** (lifespan), the app container starts only after the database is healthy.
 
-##### Зачем это нужно
+API surface (14 routers under `/api/v1`): auth, contacts (CRUD, stats, import, demo cleanup), links, contact interactions and promises, global interactions feed, search, promises / today, notes and rows (with reordering), subscription, invites, roadmap, agents, admin. OpenAPI docs are served at `/api/docs`.
 
-| Вопрос / задача                       | Как помогает ContactLink                          |
-|--------------------------------------|---------------------------------------------------|
-| Кого попросить познакомить с Витей?  | Ищем контактов, связанных с Витей → Жанна         |
-| Кто Жанна для Ивана?                 | Смотрим Link(Иван, Жанна) → spouse                |
-| С кем можно поднять тему «жена Ивана»? | Видно, что Жанна — супруга Ивана                |
-| Кто может знать Колю?                | Связь Жанна–Коля (friend)                         |
+## Frontend
 
-Без ContactLink мы знаем только «как я знаю каждого», но не «кто кого знает». С ContactLink получается **граф людей и их отношений**.
+A multi-page app in plain HTML, CSS and ES modules - no framework and no build step. This was a deliberate choice for a small product with mostly form-like screens, and it was re-validated during a frontend audit.
 
----
+- **16 pages**, each with its own entry module; shared code in `ui.js` (API client, tokens, toasts, escaping), `nav.js`, `dialog.js`, `datepicker.js`, `palette.js` (⌘K), `shortcuts.js`.
+- **i18n**: JSON dictionaries per screen. The browser imports them as JSON modules, the server uses the same files to render the page in the user's language (see [Engineering notes](ENGINEERING_NOTES.md#server-side-i18n-for-a-vanilla-js-app)).
+- **Themes**: Purple, Amber and Light, implemented as CSS custom-property tokens under `:root[data-theme]`; the theme is applied by a tiny inline script before first paint.
+- **Mobile**: bottom navigation below 1024px, `100dvh` layouts, PWA manifest and theme color.
+- **Tooling**: ESLint, Stylelint, Prettier; Playwright smoke suite.
 
-##### Направленные и ненаправленные связи
+## Authentication
 
-- **Симметричные** (`is_directed = false`): друзья, супруги, коллеги — связь двусторонняя.
-- **Направленные** (`is_directed = true`): родитель→ребёнок, начальник→подчинённый, «A познакомил B».
+- Keycloak handles credentials; the app talks to it through the admin API for sign-up, verification and account deletion, and validates access tokens against the realm's JWKS.
+- Keycloak is exposed under `/auth/*` on the same domain, so the browser only ever talks to one origin (`connect-src 'self'`).
+- Access tokens are refreshed in the background shortly before they expire; parallel 401 responses share a single refresh request because Keycloak rotates refresh tokens.
+- Registration requires an invite code; access can be time-limited and extended by an admin.
 
-При направленной связи порядок `contact_id_a` и `contact_id_b` имеет смысл: A — источник, B — цель (например, «Иван — начальник Петра»).
+## Production
 
----
-
-##### Поля на ContactCard для «моей» перспективы
-
-- `relationship_type` — как **я** знаю этого человека (colleague, brother, acquaintance, contact_of_contact…).
-- `known_through_contact_id` — через кого познакомился (опционально). Для Жанны = ID Ивана.
-
----
-
-#### ContactInteraction (Взаимодействия) — детально
-
-Связан с `ContactCard`. Каждое взаимодействие — единичный акт общения: встреча, звонок, переписка. Фиксируется **что произошло** и **что из этого следует**.
-
-
-| Поле           | Тип      | Описание                                              |
-| -------------- | -------- | ----------------------------------------------------- |
-| `id`           | UUID     | Идентификатор взаимодействия                          |
-| `contact_id`   | UUID     | Ссылка на карточку                                    |
-| `occurred_at`  | datetime | Дата и время контакта                                 |
-| `channel`      | enum     | Канал: `meeting`, `call`, `message`, `email`, `other` |
-| `place`        | str      | Место встречи (если применимо)                        |
-| `summary`      | text     | Краткая суть разговора                                |
-| `notes`        | text     | Подробные заметки, детали                             |
-| `promises`     | JSON[]   | Обещания, возникшие в **этом** контакте               |
-| `mentions`     | JSON[]   | Упоминания, темы, идеи (что обсуждали)                |
-| `follow_up_by` | date     | К какому сроку нужен follow-up (опционально)          |
-
-
-**Что вносить при каждом контакте:**
-
-- Дата, канал, краткая суть и заметки.
-- **Обещания** — конкретные договорённости, родившиеся в этом взаимодействии (я обещал перезвонить, он обещал прислать материалы, договорились встретиться в пятницу).
-- **Mentions** — важные темы, упомянутые проекты, идеи для будущих разговоров.
-
----
-
-#### Связь обещаний: ContactInteraction ↔ ContactCard
-
-**Принцип:** `promises` в **ContactInteraction** — источник правды для конкретного контакта. `promises` в **ContactCard** — агрегированный список *активных* обещаний по всем взаимодействиям.
-
-
-| Где хранится                    | Смысл                                                                                             |
-| ------------------------------- | ------------------------------------------------------------------------------------------------- |
-| **ContactInteraction.promises** | Обещания, появившиеся в *данном* взаимодействии. Исторический контекст: когда, в каком разговоре. |
-| **ContactCard.promises**        | Сводка активных/невыполненных обещаний. Для быстрого доступа и напоминаний.                       |
-
-
-**Поток данных:**
-
-1. При добавлении Interaction с `promises` — сервис **добавляет** эти обещания в `ContactCard.promises` (с привязкой к `interaction_id` для трассировки).
-2. При выполнении обещания — оно помечается как выполненное (флаг `completed`) или удаляется из `ContactCard.promises`, но остаётся в Interaction как история.
-3. Структура обещания: `{ "text": "...", "direction": "mine" | "theirs", "id": "...", "interaction_id": "...", "completed_at": null | datetime }`.
-
-Таким образом, в карточке виден актуальный список «что надо сделать», а в истории взаимодействий — откуда каждое обещание взялось.
-
-### 3.3. Дополнительные сущности (рекомендуемые для расширения)
-
-| Сущность            | Назначение                                          |
-| ------------------- | --------------------------------------------------- |
-| **ContactTag**      | Теги для группировки (по сфере, проекту, географии) |
-| **ContactReminder** | Напоминания о follow-up, днях рождения, обещаниях   |
-| **User**            | Владелец картотеки (для мультитенантности)          |
-
-*ContactLink — базовая сущность (см. выше), не расширение.*
-
-
----
-
-## 4. Взаимодействие компонентов
-
-### 4.1. Слои приложения
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  API Layer (FastAPI)                                                         │
-│  Роутеры, валидация запросов (Pydantic), обработка ошибок                    │
-└────────────────────────────────────────┬────────────────────────────────────┘
-                                         │
-┌────────────────────────────────────────▼────────────────────────────────────┐
-│  Service Layer (бизнес-логика)                                               │
-│  Карточки, связи (ContactLink), Interaction, агрегация обещаний,            │
-│  напоминания, поиск, фильтрация                                              │
-└────────────────────────────────────────┬────────────────────────────────────┘
-                                         │
-┌────────────────────────────────────────▼────────────────────────────────────┐
-│  Repository / DAO Layer                                                      │
-│  CRUD, запросы с фильтрами, пагинация                                        │
-└────────────────────────────────────────┬────────────────────────────────────┘
-                                         │
-┌────────────────────────────────────────▼────────────────────────────────────┐
-│  Database (PostgreSQL)                                                       │
-│  SQLAlchemy 2.0 (async), Alembic для миграций                                │
-└─────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph VPS[Hetzner Cloud VPS, Finland]
+        CADDY[caddy<br/>:80 / :443, Let's Encrypt]
+        APP[app<br/>FastAPI + agents]
+        KC[keycloak 26.6]
+        ADB[(app-db<br/>PostgreSQL 18)]
+        KDB[(keycloak-db<br/>PostgreSQL 16)]
+        BK[db-backup<br/>daily pg_dump, 7 days]
+        CADDY -->|"/auth/*"| KC
+        CADDY --> APP
+        APP --> ADB
+        KC --> KDB
+        BK --> ADB
+        BK --> KDB
+    end
+    APP -->|HTTPS| LLM[LLM providers]
+    APP -->|HTTPS| MAIL[Resend]
 ```
 
-### 4.2. Потоки данных
-
-1. **Создание карточки**: API → Service → DAO → DB. При необходимости создаются ContactLink (связи с другими контактами).
-2. **Добавление взаимодействия**: API → Service → DAO. Service обновляет `last_contact_at` и `last_contact_summary` у ContactCard.
-3. **Добавление связи**: API → Service → DAO. Создаётся ContactLink между двумя ContactCard.
-4. **Поиск и фильтрация**: API (query params) → Service (построение фильтров) → DAO (SQL) → пагинация → ответ.
-
----
-
-## 5. Технологический стек
-
-### 5.1. Текущий
-
-| Компонент        | Технология                      | Примечание                                                |
-| ---------------- | ------------------------------- | --------------------------------------------------------- |
-| **Backend**      | FastAPI + Pydantic v2           | Async, автодокументация OpenAPI (`/api/docs`)             |
-| **ORM**          | SQLAlchemy 2.0 async + asyncpg  | Все запросы async                                         |
-| **БД**           | PostgreSQL                      | JSONB для `promises`, `hobbies`, `interests`, `goals`     |
-| **Миграции**     | Alembic                         | При наличии `alembic.ini`; иначе `create_all` при старте  |
-| **Auth**         | Keycloak (OIDC/JWT) + port 8282 | `tenant_id` в JWT claim, multi-tenant isolation           |
-| **Конфигурация** | pydantic-settings               | `AgentSettings`, `Settings`; не `os.getenv` напрямую     |
-| **Логирование**  | Loguru                          |                                                           |
-| **AI-агент**     | LangGraph + langchain-ollama    | Граф: get_history → summarize → generate → format_output  |
-| **MCP**          | FastMCP (in-process client)     | Режим `mcp`; результат через `result.data`                |
-| **LLM**          | Ollama (qwen2.5:14b)            | `host.docker.internal:11434` из Docker-контейнера         |
-| **Frontend**     | Vanilla JS ES modules           | Без фреймворков и сборщиков                               |
-| **CSS-темы**     | CSS custom properties           | `[data-theme="dark"]` на `<html>`, anti-FOUC inline script|
-
-### 5.2. Планируемые дополнения
-
-| Компонент                | Технология                      | Когда                              |
-| ------------------------ | ------------------------------- | ---------------------------------- |
-| **Серверный поиск**      | PostgreSQL ILIKE + tsvector/GIN | Фаза 6 — высокий приоритет         |
-| **Тесты**                | pytest, pytest-asyncio, httpx   | Фаза 8 — высокий приоритет         |
-| **Напоминания**          | Планировщик (APScheduler/cron)  | Фаза 7                             |
-| **Telegram-бот**         | python-telegram-bot / aiogram   | Фаза 9                             |
-
-
----
-
-## 6. API: структура и эндпоинты
-
-### 6.1. Принципы
-
-- REST-подход.
-- Версионирование: `/api/v1/`.
-- Пагинация: `page`, `per_page` (или cursor-based для больших объёмов).
-- Фильтры через query-параметры.
-
-### 6.2. Эндпоинты (целевые)
-
-
-| Метод    | Путь                                 | Описание                                    |
-| -------- | ------------------------------------ | ------------------------------------------- |
-| `GET`    | `/api/v1/contacts`                   | Список карточек (пагинация, поиск, фильтры) |
-| `POST`   | `/api/v1/contacts`                   | Создать карточку                            |
-| `GET`    | `/api/v1/contacts/{id}`              | Карточка по ID (с links, interactions)      |
-| `PATCH`  | `/api/v1/contacts/{id}`              | Обновить карточку (частичное)               |
-| `DELETE` | `/api/v1/contacts/{id}`              | Удалить карточку                            |
-| `GET`    | `/api/v1/contacts/{id}/interactions` | История взаимодействий                      |
-| `POST`   | `/api/v1/contacts/{id}/interactions` | Добавить взаимодействие                     |
-| `GET`    | `/api/v1/contacts/{id}/links`        | Связи контакта с другими (граф)             |
-| `POST`   | `/api/v1/contacts/{id}/links`        | Добавить связь с другим контактом           |
-| `GET`    | `/api/v1/links`                     | Все связи (для визуализации графа)          |
-| `GET`    | `/api/v1/search`                     | Полнотекстовый поиск по картотеке           |
-
-
-### 6.3. Фильтры для `/api/v1/contacts`
-
-- `q` — поиск по имени, email, заметкам
-- `relationship_type` — business / personal / other
-- `has_birthday_soon` — дни рождения в ближайшие N дней
-- `last_contact_before` — не общались более N дней
-- `sort` — по имени, last_contact_at, created_at
-
----
-
-## 7. Структура директорий (актуальная)
-
-```
-personal_networking/
-├── alembic/                         # Миграции БД
-├── docs/                            # Документация
-│   ├── ARCHITECTURE.md
-│   ├── DEVELOPMENT_PLAN.md
-│   ├── AGENTS.md                    # AI-агенты: дизайн и контракты графов
-│   └── KEYCLOAK_SETUP.md
-├── CHANGELOG.md                     # История изменений
-├── CLAUDE.md                        # Инструкции для Claude Code
-├── docker-compose.yml
-├── sources/
-│   ├── api/
-│   │   ├── auth/                    # JWT-deps, CurrentUser
-│   │   ├── data_base/
-│   │   │   ├── base.py              # AsyncSession, get_db
-│   │   │   └── models.py            # SQLAlchemy ORM-модели
-│   │   ├── routers/v1/
-│   │   │   ├── contacts.py
-│   │   │   ├── contact_interactions.py
-│   │   │   ├── contact_links.py
-│   │   │   └── agents.py
-│   │   ├── schemas/
-│   │   │   └── contacts.py          # Все Pydantic-схемы
-│   │   ├── services/
-│   │   │   ├── contacts_service.py
-│   │   │   ├── interactions_service.py
-│   │   │   └── links_service.py
-│   │   └── fastapi_app.py
-│   ├── agents/
-│   │   ├── prepare_meeting_agent.py # LangGraph граф (Агент 1)
-│   │   ├── mcp_server.py            # FastMCP сервер
-│   │   └── tools/
-│   │       └── contacts_tools.py    # MCP-инструменты
-│   ├── web/                         # Статический фронтенд
-│   │   ├── index.html
-│   │   ├── login.html
-│   │   ├── contacts.html
-│   │   ├── contact.html
-│   │   └── assets/
-│   │       ├── css/styles.css       # Все стили + dark theme
-│   │       ├── js/
-│   │       │   ├── ui.js            # initTheme, showToast, setupThemeToggle
-│   │       │   ├── contact.js
-│   │       │   ├── contacts.js
-│   │       │   ├── auth.js
-│   │       │   └── main.js
-│   │       └── img/
-│   ├── main.py
-│   └── settings.py                  # Pydantic Settings + AgentSettings
-└── tests/                           # ← пока пусто, приоритет фазы 8
-```
-
----
-
-## 8. Нефункциональные требования
-
-
-| Аспект                    | Рекомендация                                                                       |
-| ------------------------- | ---------------------------------------------------------------------------------- |
-| **Масштабируемость**      | Stateless API, пул соединений к БД, при необходимости — кэш (Redis)                |
-| **Безопасность**          | HTTPS, CORS, валидация входных данных, при мультитенантности — изоляция по user_id |
-| **Аудит**                 | Логирование изменений (создание/обновление/удаление карточек)                      |
-| **Резервное копирование** | Регулярный бэкап PostgreSQL                                                        |
-
----
-
-## 8.1. Схема аутентификации и мультитенантности ()
-### 8.1.1. Подход
-- **Keycloak + OAuth2/OIDC + JWT** (access token — JWT).
-- **Один realm**, мультитенантность через `tenant_id` в claim токена.
-- **Роли и группы** для уровней доступа внутри арендатора.
-
-### 8.1.2. Схема claims токена (пример)
-
-```
-{
-  "sub": "user-uuid",
-  "preferred_username": "sychev",
-  "email": "user@example.com",
-  "tenant_id": "tenant-uuid",
-  "roles": ["owner", "admin", "user"],
-  "permissions": ["contacts:read", "contacts:write", "links:manage"],
-  "iss": "https://auth.example.com/realms/rockfile",
-  "aud": "rockfile-api",
-  "exp": 1712345678
-}
-```
-
-### 8.1.3. Изоляция данных
-- Все бизнес‑таблицы содержат `tenant_id`.
-- Все запросы в DAO/Service фильтруются по `tenant_id`.
-- Запрет на кросс‑тенантный доступ даже при знании ID.
-
-### 8.1.4. Модель прав
-- **roles**: coarse‑grained доступ (owner/admin/user).
-- **permissions**: fine‑grained доступ на уровне ресурсов.
-
-Пример:
-- `owner`: полный доступ.
-- `admin`: управление контактами и связями, без админ‑настроек арендатора.
-- `user`: чтение/создание контактов, без удаления.
-
-### 8.1.5. Поток авторизации
-1. Клиент получает access token в Keycloak (Authorization Code Flow).
-2. Клиент вызывает API с `Authorization: Bearer <token>`.
-3. API валидирует JWT (подпись, `iss`, `aud`, `exp`).
-4. API извлекает `tenant_id` и использует в запросах к БД.
-
-### 8.1.6. Self‑registration и создание tenant при первом входе
-**Цель:** любой пользователь может зарегистрироваться сам и получить изолированную картотеку.
-
-Поток:
-1. Пользователь регистрируется в Keycloak (включён `User Registration`).
-2. Пользователь входит и получает JWT.
-3. Первый запрос к API:
-   - API валидирует токен и ищет связь пользователя с tenant.
-   - Если связи нет — создаёт `tenant` и связывает с `user_id`.
-   - Возвращает ответ с `tenant_id` (и при желании сохраняет его в Keycloak через mapper/attributes).
-4. Дальше все запросы фильтруются по `tenant_id`.
-
----
-
-## 9. Риски и допущения
-
-
-| Риск                                | Митигация                                             |
-| ----------------------------------- | ----------------------------------------------------- |
-| Рост объёма данных (200k+ карточек) | Индексы, пагинация, возможно партиционирование        |
-| Конфиденциальность данных           | Шифрование в покое (БД), доступ только по авторизации |
-| Сложность поиска по JSON-полям      | GIN-индексы по JSONB, полнотекстовый поиск            |
-
-
-**Допущения:**
-
-- Изначально — один пользователь (или без авторизации для MVP).
-- Фронтенд — отдельный этап; **сначала API, затем веб-интерфейс** (HTML/CSS/JS).
-- Импорт/экспорт — планируется на более поздних фазах.
-
----
-
-## 10. Перспективы: ИИ-агент
-
-Картотека содержит структурированные данные о контактах — идеальный контекст для ИИ-агента, который помогает поддерживать отношения.
-
-### 10.1. Идеи применения
-
-
-| Сценарий                          | Описание                                                                                                                                                 |
-| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Напоминания о днях рождения**   | Агент отслеживает `birthday` у контактов и членов семьи, напоминает за N дней, предлагает идеи подарков или тему для сообщения (по интересам/хобби).     |
-| **Напоминания об обещаниях**      | Агент мониторит `promises` и `follow_up_by`, уведомляет: «Ты обещал Иванову перезвонить до пятницы» или «Петров обещал прислать отчёт — пора напомнить». |
-| **Забытые контакты**              | «С кем давно не общался» — по `last_contact_at` предлагает список людей для follow-up и краткую выжимку для возобновления разговора.                     |
-| **Подготовка к встрече**          | Перед календарной встречей агент формирует «памятку»: последний контакт, незакрытые обещания, интересы, семейные новости.                                |
-| **Персонализированные подсказки** | На основе интересов и заметок: «У Сидорова скоро ДР сына — он увлекается футболом», «Кузнецова упоминала переезд — спроси, как дела».                    |
-| **Связи между контактами**        | «Кого можно попросить познакомить с X» — при наличии связей (ContactLink) агент предлагает интро.                                                        |
-| **Еженедельный дайджест**         | Сводка: предстоящие ДР, просроченные обещания, контакты без общения N дней.                                                                              |
-
-
-### 10.2. Архитектурные предпосылки
-
-- Единый API и единый источник данных — агент работает с теми же эндпоинтами, что и веб/мобильное приложение.
-- Структурированные поля (promises, interests, last_contact_at) упрощают промпты и снижают «галлюцинации».
-- Реализация — отдельный сервис (воркер, cron, или event-driven), который периодически опрашивает API или подписывается на события.
-
----
-
-## 11. Перспективы: мобильное приложение
-
-### 11.1. Концепция
-
-Мобильное приложение как **синхронизируемый клиент**: данные, введённые в мобильном приложении, попадают на сервер и отображаются в веб-версии (и наоборот).
-
-### 11.2. Модель синхронизации
-
-
-| Подход                   | Описание                                                                                      | Плюсы                              | Минусы                                |
-| ------------------------ | --------------------------------------------------------------------------------------------- | ---------------------------------- | ------------------------------------- |
-| **Онлайн-first**         | Все операции идут через API, локальный кэш только для оффлайна                                | Простота, всегда актуальные данные | Зависимость от сети                   |
-| **Оффлайн-first + синк** | Данные пишутся локально (SQLite), очередь синхронизации при появлении сети                    | Работа без интернета               | Сложнее: конфликты, merge             |
-| **Гибрид**               | Основной режим — онлайн, при отсутствии сети — локальная очередь с последующей синхронизацией | Баланс UX и сложности              | Нужна стратегия разрешения конфликтов |
-
-
-### 11.3. Рекомендации
-
-- **API-first** — мобильное приложение использует тот же REST API, что и веб.
-- **Версионирование сущностей** — поле `updated_at` или `version` для определения «кто новее» при конфликтах.
-- **Стратегия конфликтов** — last-write-wins или ручное слияние (показывать пользователю оба варианта).
-- **Push-уведомления** — для напоминаний от ИИ-агента (Firebase, APNs и т.п.).
-
-### 11.4. Технологии (на будущее)
-
-- **Кросс-платформа:** Flutter, React Native — единая кодовая база для iOS/Android.
-- **Нативные:** Swift (iOS), Kotlin (Android) — при приоритете нативного UX.
-- **API:** тот же FastAPI, аутентификация через JWT.
-
----
-
-*Документ подготовлен как архитектурное видение. Детали реализации уточняются в DEVELOPMENT_PLAN.md и по мере обратной связи.*
+- **Server bootstrap** is a single idempotent script: Docker with log rotation, an unprivileged deploy user with a read-only deploy key, swap, `ufw` (22/80/443 only), `fail2ban`, unattended security upgrades, key-only SSH with root login disabled.
+- **Versions are pinned** where an upgrade would be silent and destructive - for example Keycloak, whose newer images migrate the database schema on start.
+- **Backups**: a dedicated container on the `postgres:18` image (a newer `pg_dump` can dump the older Keycloak database, not the other way round) dumps both databases every night in custom format, writes through a temporary file so a broken dump never looks complete, takes a dump on start if today's is missing, and keeps seven days. Off-site copies are on the roadmap.
+- Hosting moved from AWS (EC2 + RDS) to Hetzner in October 2026 - see [Engineering notes](ENGINEERING_NOTES.md#aws--hetzner-migration).
+
+## CI/CD
+
+| Workflow | Trigger | What it does |
+|---|---|---|
+| `test` | PR to `master`, push to `dev` / `master` | pytest against a PostgreSQL service; `docker compose config` for dev and prod files; build the image, start it, wait for the app (migrations included) and fetch the OpenAPI schema |
+| `deploy` | push to `master`, manual | over SSH: fetch, rebuild and restart the app, smoke-test the public URL; on failure roll back to the previous commit, rebuild and verify again; result in the job summary |
+| `secrets-scan` | PR, push | TruffleHog, verified secrets only |
+| Dependabot | weekly / monthly | Python dependencies and GitHub Actions, PRs into `dev` |
+
+Development happens on `dev`; `master` is what runs in production and is protected.

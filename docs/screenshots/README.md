@@ -1,15 +1,20 @@
 # Screenshots
 
-Сюда складываются PNG'шки главных экранов, которые рендерятся в корневом `README.md`.
+Images rendered in the root `README.md`. Taken on demo data only - no real contacts.
 
-**Рекомендуемые имена файлов:**
-- `landing.png` — главная (https://getrockfile.com/)
-- `contacts-list.png` — список контактов (`/contacts.html`)
-- `contact-detail.png` — карточка контакта (`/contact.html?id=...`)
-- `ai-agent.png` — Concierge или meeting-prep агент
-- `admin-panel.png` — админка (`/admin.html`)
-- `mobile-burger.png` — мобильная вёрстка с открытым burger-меню
+**Desktop** - 1440×900 viewport at 2x, Purple theme, English UI:
 
-**Размеры:** 1280×800 для desktop-скринов, 375×812 (iPhone) для мобильных. Желательно retina (2x).
-
-После добавления — поправь ссылки в корневом `README.md` в секции **Screenshots**.
+| File | Screen |
+|---|---|
+| `landing-1.png` | Landing page (`/`), first screen |
+| `landing-2.png` | Landing page, scrolled to the features |
+| `contacts-list.png` | Contacts list (`/contacts.html`) |
+| `today.png` | Today tab (`/contacts.html?tab=today`) |
+| `contact-detail-1.png` | Contact card (`/contact.html?id=...`): header, main, personal, plans |
+| `contact-detail-2.png` | Same card scrolled down: interactions, links, contact statistics |
+| `interactions.png` | Interactions across all contacts, with filters (`/interactions.html`) |
+| `notes.png` | Notes (`/notes.html`) |
+| `command-palette.png` | ⌘K palette open over any page |
+| `agent-concierge.png` | Concierge answer with sources (`/agents.html`) |
+| `agent-prepare-meeting.png` | Meeting prep result (`/agents.html`) |
+| `themes.png` | One screen in Purple, Amber and Light, side by side |
