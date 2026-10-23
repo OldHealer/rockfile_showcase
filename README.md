@@ -41,7 +41,7 @@ It is a solo project built end-to-end: domain model, API, auth, AI agents, front
 
 ![Landing - features](docs/screenshots/landing-2.png)
 
-### Contacts
+### Contacts - who to reach out to today, then the full list
 
 ![Contacts list](docs/screenshots/contacts-list.png)
 

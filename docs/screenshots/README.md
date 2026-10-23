@@ -2,13 +2,13 @@
 
 Images rendered in the root `README.md`. Taken on demo data only - no real contacts.
 
-Desktop, Purple theme, English UI:
+Desktop, English UI:
 
 | File | Screen |
 |---|---|
 | `landing-1.png` | Landing page (`/`), first screen |
 | `landing-2.png` | Landing page, scrolled to the features |
-| `contacts-list.png` | Contacts list (`/contacts.html`) |
+| `contacts-list.png` | Contacts (`/contacts.html`): "who to reach out to" strip and the full list, Amber theme |
 | `today.png` | Today tab (`/contacts.html?tab=today`) |
 | `contact-detail-1.png` | Contact card (`/contact.html?id=...`): header, main, personal, plans |
 | `contact-detail-2.png` | Same card scrolled down: interactions, links, contact statistics |
